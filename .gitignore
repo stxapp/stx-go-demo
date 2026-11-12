@@ -1,0 +1,7 @@
+.env
+*.pem
+*.log
+.DS_Store
+/bin/
+go.work
+go.work.sum

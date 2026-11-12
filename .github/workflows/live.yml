@@ -1,0 +1,151 @@
+name: Live
+
+# Runs every example against the public demo exchanges, selected with
+# STX_REGION and STX_ENV exactly as a customer would. The trade example places
+# one 1% buy that rests on the book and cancels it before it exits. The combos
+# example buys a small combo and cashes it out in the same run, while the maker
+# example quotes it from a second account. The maker quotes above the
+# exchange's own maker, so the run checks that the buy filled against the
+# example maker's quote. The web example is started and its endpoints and
+# account stream are read once.
+#
+# Needs these repository secrets (read_write API keys, the PEM as text):
+#   US_DEMO_API_KEY_ID, US_DEMO_API_KEY_PEM            (region us, env demo)
+#   ONTARIO_DEMO_API_KEY_ID, ONTARIO_DEMO_API_KEY_PEM  (region ontario, env demo)
+#   <prefix>_MAKER_API_KEY_ID, <prefix>_MAKER_API_KEY_PEM  (the maker's account)
+#
+# Never runs on pull requests, so the secrets are not exposed to them.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "47 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: us-demo
+            prefix: US_DEMO
+            region: us
+            env: demo
+          - name: ontario-demo
+            prefix: ONTARIO_DEMO
+            region: ontario
+            env: demo
+    name: live (${{ matrix.name }})
+    env:
+      STX_REGION: ${{ matrix.region }}
+      STX_ENV: ${{ matrix.env }}
+      STX_KEY_ID: ${{ secrets[format('{0}_API_KEY_ID', matrix.prefix)] }}
+      STX_PRIVATE_KEY: ${{ secrets[format('{0}_API_KEY_PEM', matrix.prefix)] }}
+      MAKER_KEY_ID: ${{ secrets[format('{0}_MAKER_API_KEY_ID', matrix.prefix)] }}
+      MAKER_KEY_PEM: ${{ secrets[format('{0}_MAKER_API_KEY_PEM', matrix.prefix)] }}
+    steps:
+      - name: Require an API key
+        run: |
+          if [ -z "$STX_KEY_ID" ] || [ -z "$STX_PRIVATE_KEY" ]; then
+            echo "::error::Secrets ${{ matrix.prefix }}_API_KEY_ID and ${{ matrix.prefix }}_API_KEY_PEM must be set to run the examples on ${{ matrix.name }}."
+            exit 1
+          fi
+          if [ -z "$MAKER_KEY_ID" ] || [ -z "$MAKER_KEY_PEM" ]; then
+            echo "::error::Secrets ${{ matrix.prefix }}_MAKER_API_KEY_ID and ${{ matrix.prefix }}_MAKER_API_KEY_PEM must be set to run the combo maker on ${{ matrix.name }}."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          check-latest: true
+      - name: Build
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+          mkdir -p bin
+          for d in examples/*/; do go build -o "bin/$(basename "$d")" "./$d"; done
+
+      - name: markets
+        run: |
+          set -o pipefail
+          bin/markets | tee markets.log
+          grep -q 'markets shown' markets.log || { echo "::error::markets printed no summary on ${{ matrix.name }}"; exit 1; }
+
+      - name: trade
+        run: |
+          set -o pipefail
+          bin/trade | tee trade.log
+          grep -q '^Placed: ' trade.log || { echo "::error::trade placed no order on ${{ matrix.name }}"; exit 1; }
+          grep -q '^Final:   status cancelled' trade.log || { echo "::error::trade did not end with its order cancelled on ${{ matrix.name }}"; exit 1; }
+
+      - name: live
+        run: |
+          set -o pipefail
+          bin/live 10 | tee live.log
+          grep -q '^\[account\] available ' live.log || { echo "::error::live received no account snapshot on ${{ matrix.name }}"; exit 1; }
+          grep -q '^Closed\. ' live.log || { echo "::error::live did not close cleanly on ${{ matrix.name }}"; exit 1; }
+
+      - name: portfolio
+        run: |
+          set -o pipefail
+          bin/portfolio | tee portfolio.log
+          grep -q '^Balance: ' portfolio.log || { echo "::error::portfolio printed no balance on ${{ matrix.name }}"; exit 1; }
+          # A warning, not a failure: other clients may share this account.
+          grep -q '^Open orders: 0' portfolio.log || echo "::warning::the account on ${{ matrix.name }} has open orders after the run"
+
+      - name: web
+        run: |
+          set -o pipefail
+          trap 'kill "$web" 2>/dev/null || true; echo "--- web.log"; cat web.log' EXIT
+          ADDR=127.0.0.1:8080 bin/web > web.log 2>&1 &
+          web=$!
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/me > /dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/me | tee me.json; echo
+          grep -q '"scope"' me.json || { echo "::error::web /me returned no scope on ${{ matrix.name }}"; exit 1; }
+          curl -fsS 'http://127.0.0.1:8080/markets?limit=3' | tee markets.json; echo
+          grep -q '"market_id"' markets.json || { echo "::error::web /markets returned no markets on ${{ matrix.name }}"; exit 1; }
+          curl -fsS http://127.0.0.1:8080/account | tee account.json; echo
+          grep -q '"balance"' account.json || { echo "::error::web /account returned no balance on ${{ matrix.name }}"; exit 1; }
+          # The stream sends the account as its first event; read it for a few seconds.
+          curl -sS -N --max-time 8 http://127.0.0.1:8080/account/stream > events.txt || true
+          grep -q '^event: account' events.txt || { echo "::error::web /account/stream sent no account event on ${{ matrix.name }}"; cat events.txt; exit 1; }
+
+      - name: combos, quoted by combo-maker on a second account
+        # The maker quotes 12x the stake and 0.40 a contract on a cash out, above
+        # the exchange's own maker, and only this run's player (PLAYER), so it
+        # never takes another run's requests.
+        run: |
+          set -o pipefail
+          trap 'echo "--- maker.log"; cat maker.log' EXIT
+          # The player's external_id, the one identity a maker sees on a request.
+          PLAYER=$(go run ./internal/tools/playerid)
+          [ -n "$PLAYER" ] || { echo "::error::no external_id for the player on ${{ matrix.name }}"; exit 1; }
+          PLAYER="$PLAYER" STX_KEY_ID="$MAKER_KEY_ID" STX_PRIVATE_KEY="$MAKER_KEY_PEM" WIN_MULTIPLE=12 CASH_OUT_PRICE=0.40 \
+            bin/combo-maker 60 > maker.log 2>&1 &
+          maker=$!
+          sleep 8
+          bin/combos 30 | tee combos.log
+          grep -q '^Bought: ' combos.log || { echo "::error::combos bought nothing on ${{ matrix.name }}"; exit 1; }
+          grep -q '^Sold: ' combos.log || { echo "::error::combos did not cash out on ${{ matrix.name }}"; exit 1; }
+          grep -q '^Final:   position 0' combos.log || { echo "::error::combos left a position on ${{ matrix.name }}"; exit 1; }
+          wait "$maker" || { echo "::error::combo-maker exited non-zero on ${{ matrix.name }}"; exit 1; }
+          buy=$(sed -n 's/^Request: \([0-9a-f]\{8\}\).*/\1/p' combos.log)
+          sell=$(sed -n 's/^Cash out: \([0-9a-f]\{8\}\).*/\1/p' combos.log)
+          [ ${#buy} -eq 8 ] && [ ${#sell} -eq 8 ] || { echo "::error::combos printed no request ids on ${{ matrix.name }}"; exit 1; }
+          grep -q "^\[request\]  $buy " maker.log || { echo "::error::combo-maker did not see request $buy on ${{ matrix.name }}"; exit 1; }
+          grep -q "^\[quoted\]   $buy " maker.log || { echo "::error::combo-maker did not quote request $buy on ${{ matrix.name }}"; exit 1; }
+          grep -q "^\[won\]      $buy " maker.log || { echo "::error::the buy $buy did not fill against combo-maker's quote on ${{ matrix.name }}"; exit 1; }
+          grep -q "^\[quoted\]   $sell " maker.log || { echo "::error::combo-maker did not quote the cash out $sell on ${{ matrix.name }}"; exit 1; }
+          grep -q "^\[won\]      $sell " maker.log || echo "::warning::another maker took the cash out $sell on ${{ matrix.name }}; combo-maker still holds its side"
