@@ -4,6 +4,11 @@
 
 Small, commented Go programs that list markets, place and cancel an order, stream live prices and your account, buy and cash out a combo, quote combos as a maker, and read your portfolio on the [STX](https://stxapp.io) exchange, plus a small `net/http` backend that streams your account to the browser. They use the [`github.com/stxapp/stx-go`](https://pkg.go.dev/github.com/stxapp/stx-go) SDK.
 
+## Two ways to use STX
+
+- **Your own account, with an API key.** Trade and read your own STX account from your code: every example below. Start with [Setup](#setup), then `go run ./examples/markets`.
+- **An app with its own users, with OAuth.** Each of your users links their STX account once, and your server then reads (or trades) their STX account for them. [`examples/link-account`](examples/link-account/main.go) is that flow in one short server; see [Link a member's STX account](#link-a-members-stx-account-oauth).
+
 ## Before you start
 
 - Go 1.24 or later.
@@ -43,7 +48,7 @@ The programs never print your key.
 
 ## Examples
 
-Each program is in [`examples/`](examples/) and runs with one command. The helpers they share (best bid and offer, picking a market, combo quote math) are in [`internal/demo/`](internal/demo/).
+Each program is in [`examples/`](examples/) and runs with one command. All but the last use an API key. The helpers they share (best bid and offer, picking a market, combo quote math) are in [`internal/demo/`](internal/demo/).
 
 ### List markets
 
@@ -123,6 +128,26 @@ It prints one line per event: `[request]` for a new request, `[quoted]` for your
 
 `client.Account.Positions` also returns markets you have traded out of, with a position of `0.00`; the program leaves those out. The live example shows the same balance and positions as they change.
 
+### Link a member's STX account (OAuth)
+
+`go run ./examples/link-account` is the server side of an app with its own user accounts that links each user's STX account once. Code: [`examples/link-account/main.go`](examples/link-account/main.go). It needs an OAuth app registered with STX (client id, secret and redirect URI), not an API key; [Build an app](https://docs.stxapp.io/apps/) explains how to get one and how the flow works.
+
+```bash
+STX_HOST=demo.stxapp.io STX_OAUTH_CLIENT_ID=your-client-id STX_OAUTH_CLIENT_SECRET=your-client-secret \
+  STX_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/callback go run ./examples/link-account
+```
+
+Open http://127.0.0.1:8787/connect?user=alice in a browser, where `alice` stands for your own user id. STX asks the member to sign in and approve your app, then sends them back to `/callback`, which stores their tokens under `alice`. From then on `GET /member?user=alice` reads the member's profile and balance, with no further prompt: the client refreshes the tokens before they expire and stores the rotated refresh token. `POST /unlink?user=alice` revokes the link.
+
+| Endpoint | What |
+| --- | --- |
+| `GET /connect?user=ID` | Sends your user to STX to approve the link (authorization code with PKCE) |
+| `GET /callback` | Stores the member's tokens under your user id |
+| `GET /member?user=ID` | The linked member's profile and balance |
+| `POST /unlink?user=ID` | Revokes the link and forgets the tokens |
+
+The client secret and every token stay on your server. The example keeps tokens in `stx-tokens.json` and takes the user from `?user=` to stay short; a real app keeps tokens encrypted in its database and takes the user from its own login session. It asks for `profile.read` and `balance.read`; add `orders.write` to trade for the member. Errors come back as what your front end should do next: `link_required`, `account_pending` (the member has not finished verifying their STX account), `terms_required` with the page to send them to, or the exchange's reason. [Apps with the Go SDK](https://docs.stxapp.io/sdks/go/apps/) covers the calls in full.
+
 ## Tests
 
 ```bash
@@ -133,10 +158,6 @@ go test ./...
 The tests cover the shared helpers with fakes, so they need no API key and make no network calls.
 
 The [Live](.github/workflows/live.yml) workflow also runs every example, the web backend included, against the US and Ontario demo exchanges on each push to `main` and once a day.
-
-## Building an app for other STX members?
-
-Everything above trades your own account with your own API key. OAuth is only needed when you build an app that acts on behalf of other STX members, with their consent. See [Apps with the Go SDK](https://docs.stxapp.io/sdks/go/apps/) and the [ISV guide](https://docs.stxapp.io/isv/), and the example app [stx-isv-demo](https://github.com/stxapp/stx-isv-demo).
 
 ## Documentation
 

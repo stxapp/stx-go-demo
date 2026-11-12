@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	stx "github.com/stxapp/stx-go"
@@ -73,4 +74,29 @@ func PickComboLegs(ctx context.Context, client *stx.Client, count int, sport str
 		legs = append(legs, m)
 	}
 	return legs, nil
+}
+
+// ReadOrder reads an order until done reports true, for up to wait. Order
+// reads can trail a placement or a cancel by a few seconds on some
+// exchanges, so a read straight after one can miss the order (not found)
+// or show its previous status. It returns the last order read.
+func ReadOrder(ctx context.Context, client *stx.Client, orderID string, wait time.Duration, done func(*stx.Order) bool) (*stx.Order, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		order, err := client.Orders.Get(ctx, orderID)
+		if err == nil && done(order) {
+			return order, nil
+		}
+		if err != nil && !errors.Is(err, stx.ErrNotFound) {
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			return order, err
+		}
+		select {
+		case <-ctx.Done():
+			return order, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }

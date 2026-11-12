@@ -176,11 +176,11 @@ func run(ctx context.Context) int {
 	return 0
 }
 
-// settledPosition is your position in a market, read until it is flat or 10
-// seconds pass.
+// settledPosition is your position in a market, read until it is flat or a
+// minute passes.
 func settledPosition(ctx context.Context, client *stx.Client, marketID string) (stx.Decimal, error) {
 	position := stx.Decimal("0.00")
-	for range 10 {
+	for range 30 {
 		held, err := client.Account.Positions(ctx, &stx.PositionsQuery{MarketIDs: []string{marketID}})
 		if err != nil {
 			return "", err
@@ -192,7 +192,7 @@ func settledPosition(ctx context.Context, client *stx.Client, marketID string) (
 		if position.IsZero() {
 			break
 		}
-		time.Sleep(time.Second)
+		time.Sleep(2 * time.Second)
 	}
 	return position, nil
 }

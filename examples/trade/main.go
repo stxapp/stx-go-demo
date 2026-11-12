@@ -68,7 +68,7 @@ func run(ctx context.Context) int {
 		orderID = order.ID
 		fmt.Printf("Placed:  buy 1 @ %s  id %s  status %s\n", price, orderID, order.Status)
 		// 3. Read it back. The order is on the book and has not filled.
-		open, err := client.Orders.Get(ctx, orderID)
+		open, err := demo.ReadOrder(ctx, client, orderID, time.Minute, func(o *stx.Order) bool { return o.Status != "accepted" })
 		if err != nil {
 			log.Print(err)
 			status = 1
@@ -108,7 +108,7 @@ func run(ctx context.Context) int {
 	fmt.Printf("Cancel:  %s  %s\n", cancellation.OrderID, cancellation.Status)
 
 	// 5. Confirm the final state.
-	done, err := client.Orders.Get(ctx, orderID)
+	done, err := demo.ReadOrder(ctx, client, orderID, time.Minute, func(o *stx.Order) bool { return o.Status == "cancelled" })
 	if err != nil {
 		log.Fatal(err)
 	}
