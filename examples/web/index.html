@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STX account</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 56rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.05rem; margin-top: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #8884; }
+  #status { font-size: .9rem; opacity: .75; }
+  .balance { font-size: 1.2rem; }
+</style>
+</head>
+<body>
+<h1>Your STX account</h1>
+<p id="status">Connecting...</p>
+<p class="balance">Available <strong id="available">-</strong> of <span id="total">-</span></p>
+
+<h2>Open orders</h2>
+<table><thead><tr><th>Order</th><th>Market</th><th>Side</th><th>Quantity</th><th>Price</th><th>Filled</th><th>Status</th></tr></thead><tbody id="orders"></tbody></table>
+
+<h2>Positions</h2>
+<table><thead><tr><th>Market</th><th>Position</th></tr></thead><tbody id="positions"></tbody></table>
+
+<h2>Recent fills</h2>
+<table><thead><tr><th>Trade</th><th>Market</th><th>Side</th><th>Filled</th><th>Price</th></tr></thead><tbody id="fills"></tbody></table>
+
+<script>
+  // Fills a table body with one row per item, as text (never HTML).
+  function rows(id, items, cells) {
+    const body = document.getElementById(id);
+    body.replaceChildren(...items.map((item) => {
+      const tr = document.createElement("tr");
+      for (const value of cells(item)) {
+        const td = document.createElement("td");
+        td.textContent = value ?? "-";
+        tr.append(td);
+      }
+      return tr;
+    }));
+  }
+  const short = (id) => (id ?? "").slice(0, 8);
+
+  // The server sends the whole account on connect and after every change.
+  // EventSource reconnects by itself if the connection drops.
+  const events = new EventSource("/account/stream");
+  events.addEventListener("account", (e) => {
+    const a = JSON.parse(e.data);
+    document.getElementById("status").textContent = "Live. Updated " + new Date().toLocaleTimeString();
+    document.getElementById("available").textContent = a.balance?.available_balance ?? "-";
+    document.getElementById("total").textContent = a.balance?.account_balance ?? "-";
+    rows("orders", a.open_orders, (o) => [short(o.id), short(o.market_id), o.action, o.quantity, o.price, o.filled, o.status]);
+    rows("positions", a.positions, (p) => [short(p.market_id), p.position]);
+    rows("fills", a.fills, (f) => [short(f.trade_id), short(f.market_id), f.action, f.filled, f.price]);
+  });
+  events.onerror = () => {
+    document.getElementById("status").textContent = "Disconnected, retrying...";
+  };
+</script>
+</body>
+</html>
