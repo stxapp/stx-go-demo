@@ -48,15 +48,23 @@ The programs never print your key.
 
 ## Examples
 
-Each program is in [`examples/`](examples/) and runs with one command. All but the last use an API key. The helpers they share (best bid and offer, picking a market, combo quote math) are in [`internal/demo/`](internal/demo/).
+Each program is in [`examples/`](examples/) and runs with one command. All but the last use an API key. The sample output below comes from the US demo exchange (`region = us`, `env = demo`), and from the Ontario demo exchange (`region = ontario`, `env = demo`) where noted. Yours will show the markets open when you run it. The helpers they share (best bid and offer, picking a market, combo quote math) are in [`internal/demo/`](internal/demo/).
 
 ### List markets
 
 `go run ./examples/markets` lists the first five markets that are open and accepting orders and whose event has not started yet, with the best bid (highest) and best offer (lowest) on each. Code: [`examples/markets/main.go`](examples/markets/main.go).
 
-Each line reads `Manchester United at Como: UEFA MAN @ COMO Draw 1st Half  bid 0.3100  offer 0.3600`: the event, the market, then the best bid and offer.
+```text
+Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 4.5  bid 0.5000  offer 0.5500
+Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 7.5  bid 0.4700  offer 0.5100
+Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 8.5  bid 0.0600  offer 0.0700
+Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 5.5  bid 0.7700  offer -
+Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA +2.5  bid 0.6400  offer 0.6800
 
-Prices are dollars per contract, as exact decimal strings (`stx.Decimal`, never a float). A bid of `0.3100` on a market whose winning contract pays `1.0000` means a buyer will pay 31 cents for a contract that pays $1 if the first half is a draw, and an offer of `0.3600` means a seller will take 36 cents for it. `-` means nobody is bidding or offering. Some markets pay `100.0000` for a winning contract, so their prices read like `42.0000`. Each market's `MaxPrice` says which.
+5 upcoming markets shown.
+```
+
+Each line is the event, the market, then the best bid and offer. Prices are dollars per contract, as exact decimal strings (`stx.Decimal`, never a float). A bid of `0.4700` on a market whose winning contract pays `1.0000` means a buyer will pay 47 cents for a contract that pays $1 if the teams score more than 7.5 goals, and an offer of `0.5100` means a seller will take 51 cents for it. `-` means nobody is bidding or offering. Some markets pay `100.0000` for a winning contract, so their prices read like `42.0000`. Each market's `MaxPrice` says which.
 
 `client.Markets.All` walks every page for you as an `iter.Seq2`; `client.Markets.List` returns one page at a time instead.
 
@@ -68,7 +76,27 @@ The price is 1% of what a winning contract pays, read from the market's `MaxPric
 
 It uses the first such market it finds. To look only at one sport, set `SPORT`, for example `SPORT=Football go run ./examples/trade`. The live example reads `SPORT` too, so the two programs still watch the same market.
 
-It prints the market, then one line per step: `Placed:` with the order id and status `accepted`, `Read:` with status `open` and `filled 0.00 of 1.00`, `Cancel:` with `cancelled`, and `Final:   status cancelled  filled 0.00`.
+```text
+Market:  Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 4.5
+         STXNHL-26NOV121200CARSEA-TOTAL4.5  (a winning contract pays 1.0000)
+Placed:  buy 1 @ 0.01  id fc93bdf8-7b8b-41c7-b026-f4d0c9fd9a74  status accepted
+Read:    status open  filled 0.00 of 1.00  client id demo-ESCS5K3JVEM23HDBKNZWKLMLVR
+Cancel:  fc93bdf8-7b8b-41c7-b026-f4d0c9fd9a74  cancelled
+Final:   status cancelled  filled 0.00
+```
+
+The same program on the Ontario demo exchange:
+
+```text
+Market:  Chattanooga Mocs at Northern Kentucky Norse: NCAABW UTC @ NKU
+         STXNCAABW-26NOV121100UTCNKU-GAMENKU  (a winning contract pays 1.0000)
+Placed:  buy 1 @ 0.01  id dc4a31a4-325c-49cb-9ee5-de32157cc2c7  status accepted
+Read:    status open  filled 0.00 of 1.00  client id demo-3T6AXI7KVFJ3FYOJJ4D53BPFAM
+Cancel:  dc4a31a4-325c-49cb-9ee5-de32157cc2c7  cancelled
+Final:   status cancelled  filled 0.00
+```
+
+An order read straight after a place or a cancel can trail it by a few seconds, so the program reads again, for up to a minute, until it sees the new status.
 
 The order carries a `ClientOrderID`, your own id for it. If a call to place an order fails without an answer, look the order up by that id before placing it again; [Trading](https://docs.stxapp.io/sdks/go/trading/) explains why. The program does that lookup before it cancels, and it cancels whatever happens after the order is sent, so it never leaves an order on the book. It exits non-zero if the order is refused or does not end cancelled. A refusal is a `*stx.APIError` with the exchange's status and message.
 
@@ -76,7 +104,20 @@ The order carries a `ClientOrderID`, your own id for it. If a call to place an o
 
 `go run ./examples/live` opens one WebSocket, streams the order book of the market the trade example uses together with your live account (balance, open orders, fills and positions), and exits after 30 seconds. `go run ./examples/live 60` streams for 60. Code: [`examples/live/main.go`](examples/live/main.go).
 
-Run `go run ./examples/trade` in a second terminal while it streams to see the order arrive on the book and on your account, and leave both when it is cancelled. Each `[book]` line shows the top of the book, so a one-cent order below the best bid arrives as a new push without changing the line. Each `[account]` line is one update, such as `[account] order buy 1.00 @ 0.0100  open  filled 0.00`.
+Run `go run ./examples/trade` in a second terminal while it streams to see the order arrive on the book and on your account, and leave both when it is cancelled. Each `[book]` line shows the top of the book, so a one-cent order below the best bid arrives as a new push without changing the line. Each `[account]` line is one update, such as `[account] order buy 1.00 @ 0.0100  open  filled 0.00`. This run, `go run ./examples/live 10` with nothing else trading on the account, shows the starting state and one balance push:
+
+```text
+Watching Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 4.5
+[book]    best bid 50.00 @ 0.5000  best offer 50.00 @ 0.5500  (starting snapshot)
+[book]    best bid 50.00 @ 0.5000  best offer 50.00 @ 0.5500
+[account] available 100000.0000  open orders 0  positions 0
+
+Streaming for 10 s. Run go run ./examples/trade in another terminal to see an order come and go.
+
+[account] balance available 100000.0000
+
+Closed. Open orders now: 0
+```
 
 `client.Stream` signs the connection, sends heartbeats, reconnects and rejoins for you. `stream.AccountView` returns once the starting snapshot of each part is in, then keeps itself current; `view.Changes()` reports every update and `view.Snapshot()` reads the whole account at any time. The channels and their payloads are described under [WebSockets](https://docs.stxapp.io/sdks/go/websockets/).
 
@@ -100,6 +141,19 @@ The backend keeps one WebSocket and one live account view for its whole life, so
 ```bash
 curl -N http://localhost:8080/account/stream
 curl 'http://localhost:8080/markets?limit=3'
+curl http://localhost:8080/account
+```
+
+`GET /markets?limit=3` on the US demo exchange:
+
+```json
+[{"market_id":"43a378f0-dd01-4443-99f5-bfa1dae98840","symbol":"STXNHL-26NOV112130UTAVGK-PTSVGKJEICHEL289190-1.5","title":"J. Eichel 1.5 PTS","event_title":"Utah Mammoth at Vegas Golden Knights","best_bid":"-","best_offer":"-","last_traded_price":null,"max_price":"1.0000"},{"market_id":"2bf54b13-c405-4a85-8730-d964547d44c1","symbol":"STXNBA-26NOV112130GSHOU-TOTAL220.5","title":"NBA GS @ HOU OU 220.5","event_title":"Golden State Warriors at Houston Rockets","best_bid":"-","best_offer":"-","last_traded_price":null,"max_price":"1.0000"},{"market_id":"6d6e7f54-5b9b-4f5a-9ccc-849efd352e85","symbol":"STXNBA-26NOV112130GSHOU-TOTAL224.5","title":"NBA GS @ HOU OU 224.5","event_title":"Golden State Warriors at Houston Rockets","best_bid":"-","best_offer":"-","last_traded_price":null,"max_price":"1.0000"}]
+```
+
+`GET /account`, which is also the data of every `account` event on `/account/stream`:
+
+```json
+{"balance":{"account_balance":"100000.0000","account_id":"6a08bc1f-538b-4c5f-854d-13942c3e85bd","available_balance":"100000.0000","buy_order_liability":"0.0000","escrow":"0.0000","fee_schedule":"on_trade","loyalty_tier":"rookie","maker_factor":-0.01,"position_premium_liability":"0.0000","sell_order_liability":"0.0000","taker_factor":0.05,"total_adjustments":"100000.0000","total_deposits":"0.0000","total_fees":"0.0000","total_settlement_pnl":"0.0000","total_traded":"0.0000","total_withdrawals":"0.0000","user_id":"22f08815-779b-473a-bc43-818b872cedb8"},"open_orders":[],"fills":[],"positions":[]}
 ```
 
 Prices and quantities are decimal strings in and out, exactly as the exchange sends them. A refused order comes back with the exchange's status and message.
@@ -112,6 +166,24 @@ A combo is one market over two or more legs, and it pays only if every leg wins.
 
 It waits up to 20 seconds for each quote and says so if none arrives; `go run ./examples/combos 60` waits up to 60. Set the stake and number of legs with `STAKE=5 LEGS=3 go run ./examples/combos`, and look only at one sport with `SPORT=Football go run ./examples/combos`.
 
+```text
+Leg 1:   Will the Seattle Kraken and the Carolina Hurricanes combine to score more than 4.5 goals?  (CAR @ SEA OU 4.5)
+Leg 2:   Will the George Mason Patriots defeat the Kansas City Roos?  (KC @ GMU)
+
+Request: 0c1c5935-42c4-4559-bde2-33c82979e93e  stake 2.00
+Waiting up to 30s for a quote...
+[quote]  win 24.0000 on a 2.00 stake  (quote ea28b941-a395-48fc-bedc-70ae57146027)
+Bought:  25.00 @ 0.0770  order ab67cd1a-6075-4657-b6e2-30e30b1dfb40  (accepted win 24.0000)
+         combo 1496ee41-ae6d-43b2-b6cf-aeea518f18bc  Won / Won  (a winning contract pays 1.0000)
+
+Cash out: 27a44d26-466d-4d72-a9f7-454cca19394b  selling 25.00
+[quote]  pays 10.0000 for all 25.00  (quote 86be9801-3c2a-4d85-816a-56b19e5af209)
+Sold:    25.00 @ 0.4000  order fc991e34-98ee-43d4-92de-69faeb564723  (accepted 10.0000)
+Final:   position 0.00 on the combo  open orders 0
+```
+
+That run (`go run ./examples/combos 30`) was quoted by the maker example below on a second account, at `WIN_MULTIPLE=12 CASH_OUT_PRICE=0.40`: a 2.00 stake won 24.00 if both legs win, and the cash out paid 0.40 a contract.
+
 When the best quote moves before your accept lands, the accept fails with `stx.ErrComboPriceMoved` and the live quote, and the program takes that one instead. [Combos](https://docs.stxapp.io/sdks/go/combos/) covers the player side.
 
 ### Quote combos as a maker
@@ -120,11 +192,41 @@ When the best quote moves before your accept lands, the accept fails with `stx.E
 
 On a buy it quotes what the player wins: the stake times `WIN_MULTIPLE` (default 9). On a cash out it quotes what it pays for everything the player sells: `CASH_OUT_PRICE` a contract (default 0.08). Each quote stands for `QUOTE_SECONDS` (default 30). The exchange derives a price from each amount and refuses one whose price is not between 0 and the market's max price, so the program checks the same rule first and skips requests it cannot price. With `PLAYER` set to a player's external id, it quotes only that player's requests.
 
-It prints one line per event: `[request]` for a new request, `[quoted]` for your quote, `[accepted]` when the player takes it, `[won]` when the exchange places your order on the combo's market at the same price and size as the player's, `[lost]` (`placed_elsewhere`) when the player takes another maker's quote, `[expired]` when your quote runs out, and `[closed]` when the request ends, whether you quoted or not. Other makers quote too, so expect to lose some requests. A request your own account opened is refused with `cannot_quote_own_request`. Quotes belong to the connection that placed them: on Ctrl-C, or if the connection drops, they are withdrawn. [Quote combos as a maker](https://docs.stxapp.io/websockets/combo-maker/) covers the maker side, and [Combo negotiation](https://docs.stxapp.io/websockets/channels/combo-negotiation/) documents each frame.
+It prints one line per event: `[request]` for a new request, `[quoted]` for your quote, `[accepted]` when the player takes it, `[won]` when the exchange places your order on the combo's market at the same price and size as the player's, `[lost]` (`placed_elsewhere`) when the player takes another maker's quote, `[expired]` when your quote runs out, and `[closed]` when the request ends, whether you quoted or not. The run that quoted the combos example above, `WIN_MULTIPLE=12 CASH_OUT_PRICE=0.40 go run ./examples/combo-maker 60`, won both the buy and the cash out:
+
+```text
+Quoting combos on https://demo.stxapp.io as a maker.
+Buys: win 12x the stake. Cash outs: 0.40 a contract. Each quote stands 30s. Ctrl-C to stop.
+
+[request]  0c1c5935  buy, stake 2.0000, 2 legs: CAR @ SEA OU 4.5 won, KC @ GMU won
+[quoted]   0c1c5935  win 24.0000  for 30s  quote ea28b941-a395-48fc-bedc-70ae57146027
+[accepted] 0c1c5935  quote ea28b941-a395-48fc-bedc-70ae57146027
+[won]      0c1c5935  order 2dad5204-a5e3-4841-b430-899889849742  25.00 @ 0.0770  combo 1496ee41-ae6d-43b2-b6cf-aeea518f18bc
+[closed]   0c1c5935  placed
+[request]  27a44d26  cash out of 25.00 on combo 1496ee41
+[quoted]   27a44d26  pay 10.0000 for 25.00  for 30s  quote 86be9801-3c2a-4d85-816a-56b19e5af209
+[accepted] 27a44d26  quote 86be9801-3c2a-4d85-816a-56b19e5af209
+[won]      27a44d26  order 69985614-b1b5-42ca-ba5e-d24e0478a8ac  25.00 @ 0.4000  combo 1496ee41-ae6d-43b2-b6cf-aeea518f18bc
+[closed]   27a44d26  placed
+```
+
+Other makers quote too, so expect to lose some requests. A request your own account opened is refused with `cannot_quote_own_request`. Quotes belong to the connection that placed them: on Ctrl-C, or if the connection drops, they are withdrawn. [Quote combos as a maker](https://docs.stxapp.io/websockets/combo-maker/) covers the maker side, and [Combo negotiation](https://docs.stxapp.io/websockets/channels/combo-negotiation/) documents each frame.
 
 ### Read your portfolio
 
 `go run ./examples/portfolio` prints your key's scope, balance, open positions, open orders and recent fills. Code: [`examples/portfolio/main.go`](examples/portfolio/main.go).
+
+```text
+Key scope: read_write
+
+Balance: 100000.0000  available 100000.0000
+
+Open positions: 0
+
+Open orders: 0
+
+Recent fills: 0
+```
 
 `client.Account.Positions` also returns markets you have traded out of, with a position of `0.00`; the program leaves those out. The live example shows the same balance and positions as they change.
 
