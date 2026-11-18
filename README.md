@@ -76,7 +76,7 @@ The price is 1% of what a winning contract pays, read from the market's `MaxPric
 
 It uses the first such market it finds. To look only at one sport, set `SPORT`, for example `SPORT=Football go run ./examples/trade`.
 
-`POST_ONLY=1 go run ./examples/trade` places the same order as [post-only](https://docs.stxapp.io/sdks/go/trading/#post-only-and-fill-or-kill): it rests only as a maker, and is not placed if it would match on arrival. On an exchange without post-only orders the SDK refuses it before sending anything, and the program says so. If the API's firewall refuses a request, for example from a location the exchange does not serve, the program prints the reason and the reference to quote to support; see [Blocked requests](https://docs.stxapp.io/sdks/go/errors-and-retries/#blocked-requests). The live example reads `SPORT` too, so the two programs still watch the same market.
+`POST_ONLY=1 go run ./examples/trade` places the same order as [post-only](https://docs.stxapp.io/sdks/go/trading/#post-only-and-fill-or-kill): it rests only as a maker, and is not placed if it would match on arrival. An exchange that has not enabled post-only orders refuses it, and the program says so; [Post-only and fill-or-kill orders](#post-only-and-fill-or-kill-orders) shows every outcome. If the API's firewall refuses a request, for example from a location the exchange does not serve, the program prints the reason and the reference to quote to support; see [Blocked requests](https://docs.stxapp.io/sdks/go/errors-and-retries/#blocked-requests). The live example reads `SPORT` too, so the two programs still watch the same market.
 
 ```text
 Market:  Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 4.5
@@ -101,6 +101,42 @@ Final:   status cancelled  filled 0.00
 An order read straight after a place or a cancel can trail it by a few seconds, so the program reads again, for up to a minute, until it sees the new status.
 
 The order carries a `ClientOrderID`, your own id for it. If a call to place an order fails without an answer, look the order up by that id before placing it again; [Trading](https://docs.stxapp.io/sdks/go/trading/) explains why. The program does that lookup before it cancels, and it cancels whatever happens after the order is sent, so it never leaves an order on the book. It exits non-zero if the order is refused or does not end cancelled. A refusal is a `*stx.APIError` with the exchange's status and message.
+
+### Post-only and fill-or-kill orders
+
+`go run ./examples/fill-modes` places three orders that show how the [fill modes](https://docs.stxapp.io/sdks/go/trading/#post-only-and-fill-or-kill) behave. Code: [`examples/fill-modes/main.go`](examples/fill-modes/main.go).
+
+1. A post-only buy at a price nobody offers. It rests on the book as a maker, and the program cancels it.
+2. A post-only buy at the best offer of another market. It would trade on arrival, so the exchange cancels it with cancellation reason `auto_matching` and nothing trades. The SDK returns a `*stx.PostOnlyWouldMatchError` carrying the cancelled order.
+3. A fill-or-kill buy at a price nobody offers. It cannot fill in full, so the exchange cancels it with nothing filled. With enough on offer at the price it would end `filled` instead.
+
+On the US demo exchange:
+
+```text
+Market:  Houston Cougars at Florida Gators: NCAAB HOU @ FLA OU 150.5
+
+1. Post-only buy 1 @ 0.01
+Resting: status open  fill mode post_only  filled 0.00 of 1.00
+Cancel:  aa53424d-f491-4bd0-bcce-b55f72d5fb96  cancelled, final status cancelled
+
+2. Post-only buy 1 @ 0.5200, the best offer on STXNCAAB-26NOV181630HOUFLA-TOTAL150.5
+Cancelled: status cancelled  cancellation reason auto_matching  filled 0.00
+
+3. Fill-or-kill buy 1 @ 0.01
+Placed:  status accepted  fill mode fill_or_kill
+Killed:  status cancelled  filled 0.00
+```
+
+An exchange that has not enabled a fill mode refuses the order with an error matching `stx.ErrNotAvailable`. An exchange without fill modes may instead place the order as a normal limit order, which could trade. The program checks `FillMode` on the placed order, cancels it when it is not the mode it sent, and stops before the orders that would trade. On the Ontario demo exchange, which does not have fill modes yet:
+
+```text
+Market:  Rowan Profs at La Salle Explorers: NCAABW ROW @ LAS
+
+1. Post-only buy 1 @ 0.01
+Placed as a normal order (fill mode ""): this exchange has no fill modes.
+Cancel:  31dd6674-4ee1-4335-a107-aa68e98d3bd0  cancelled, final status cancelled
+Skipping the post-only and fill-or-kill orders that would trade.
+```
 
 ### Stream prices and your account
 
