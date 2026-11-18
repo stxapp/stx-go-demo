@@ -74,7 +74,9 @@ Each line is the event, the market, then the best bid and offer. Prices are doll
 
 The price is 1% of what a winning contract pays, read from the market's `MaxPrice` (one cent on a $1 contract, `1.00` on a $100 one), and the program only picks a market whose event has not started and where nobody is offering at that price or lower. The order rests on the book and does not trade, and the program cancels it before it exits.
 
-It uses the first such market it finds. To look only at one sport, set `SPORT`, for example `SPORT=Football go run ./examples/trade`. The live example reads `SPORT` too, so the two programs still watch the same market.
+It uses the first such market it finds. To look only at one sport, set `SPORT`, for example `SPORT=Football go run ./examples/trade`.
+
+`POST_ONLY=1 go run ./examples/trade` places the same order as [post-only](https://docs.stxapp.io/sdks/go/trading/#post-only-and-fill-or-kill): it rests only as a maker, and is not placed if it would match on arrival. On an exchange without post-only orders the SDK refuses it before sending anything, and the program says so. If the API's firewall refuses a request, for example from a location the exchange does not serve, the program prints the reason and the reference to quote to support; see [Blocked requests](https://docs.stxapp.io/sdks/go/errors-and-retries/#blocked-requests). The live example reads `SPORT` too, so the two programs still watch the same market.
 
 ```text
 Market:  Carolina Hurricanes at Seattle Kraken: NHL CAR @ SEA OU 4.5
