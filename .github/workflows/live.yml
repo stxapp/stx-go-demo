@@ -2,7 +2,11 @@ name: Live
 
 # Runs every example against the public demo exchanges, selected with
 # STX_REGION and STX_ENV exactly as a customer would. The trade example places
-# one 1% buy that rests on the book and cancels it before it exits. The combos
+# one 1% buy that rests on the book and cancels it before it exits. The
+# fill-modes example places a post-only order that rests (then cancels it), a
+# post-only order at the best offer that the exchange cancels with
+# auto_matching, and a fill-or-kill order that is killed with nothing filled.
+# The combos
 # example buys a small combo and cashes it out in the same run, while the maker
 # example quotes it from a second account. The maker quotes above the
 # exchange's own maker, so the run checks that the buy filled against the
@@ -38,14 +42,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # fill_modes: what the exchange does with post-only and fill-or-kill
+          # orders. US demo takes both; Ontario demo runs a release without
+          # fill modes that places them as normal orders, which the example
+          # detects, cancels and stops at.
           - name: us-demo
             prefix: US_DEMO
             region: us
             env: demo
+            fill_modes: "on"
           - name: ontario-demo
             prefix: ONTARIO_DEMO
             region: ontario
             env: demo
+            fill_modes: ignored
     name: live (${{ matrix.name }})
     env:
       STX_REGION: ${{ matrix.region }}
@@ -89,6 +99,26 @@ jobs:
           bin/trade | tee trade.log
           grep -q '^Placed: ' trade.log || { echo "::error::trade placed no order on ${{ matrix.name }}"; exit 1; }
           grep -q '^Final:   status cancelled' trade.log || { echo "::error::trade did not end with its order cancelled on ${{ matrix.name }}"; exit 1; }
+
+      - name: fill-modes
+        run: |
+          set -o pipefail
+          bin/fill-modes | tee fill-modes.log
+          fail() { echo "::error::fill-modes on ${{ matrix.name }}: $1"; exit 1; }
+          if [ "${{ matrix.fill_modes }}" = "on" ]; then
+            grep -q '^Resting: status open  fill mode post_only' fill-modes.log || fail "the post-only order did not rest"
+            grep -q '^Cancel: .* final status cancelled' fill-modes.log || fail "the resting post-only order was not cancelled"
+            if grep -q '^2. No market with an offer' fill-modes.log; then
+              echo "::warning::no market with an offer on ${{ matrix.name }}; the crossing post-only order was skipped"
+            else
+              grep -q '^Cancelled: status cancelled  cancellation reason auto_matching  filled 0' fill-modes.log || fail "the crossing post-only order was not cancelled with auto_matching"
+            fi
+            grep -Eq '^(Killed:  status cancelled  filled 0|Filled: )' fill-modes.log || fail "the fill-or-kill order neither filled nor was killed"
+          else
+            grep -q '^Placed as a normal order' fill-modes.log || fail "expected the post-only order to be placed as a normal order"
+            grep -q '^Cancel: .* final status cancelled' fill-modes.log || fail "the normal order was not cancelled"
+            ! grep -q '^2\. ' fill-modes.log || fail "the example went on to orders that would trade"
+          fi
 
       - name: live
         run: |

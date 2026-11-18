@@ -52,8 +52,9 @@ func run(ctx context.Context) int {
 	//    order again if the call fails without an answer, instead of placing
 	//    it twice.
 	//    With POST_ONLY set the order rests only as a maker: it is not placed
-	//    if it would match on arrival. The SDK first checks that this exchange
-	//    offers post-only orders and sends nothing where it does not.
+	//    if it would match on arrival. An exchange that has not enabled
+	//    post-only orders refuses it; one without fill modes may place it as
+	//    a normal order (FillMode on the placed order says which).
 	clientOrderID := "demo-" + rand.Text()
 	status := 0
 	orderID := ""
@@ -86,7 +87,7 @@ func run(ctx context.Context) int {
 		}
 		fmt.Printf("Read:    status %s  filled %s of %s  client id %s\n", open.Status, open.Filled, open.Quantity, open.ClientOrderID)
 	case errors.Is(err, stx.ErrNotAvailable):
-		// This exchange has no post-only orders yet; nothing was sent.
+		// This exchange has not enabled post-only orders and refused it.
 		refused = true
 		fmt.Fprintf(os.Stderr, "%v Run without POST_ONLY to place a normal order.\n", err)
 	case errors.As(err, &wouldMatch):
