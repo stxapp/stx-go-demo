@@ -8,6 +8,7 @@
 //
 //	go run ./examples/trade
 //	SPORT=Football go run ./examples/trade   (only look at markets in that sport)
+//	POST_ONLY=1 go run ./examples/trade      (a post-only order: it rests only as a maker)
 package main
 
 import (
@@ -50,10 +51,17 @@ func run(ctx context.Context) int {
 	// 2. Place the order. ClientOrderID is your own id: use it to find the
 	//    order again if the call fails without an answer, instead of placing
 	//    it twice.
+	//    With POST_ONLY set the order rests only as a maker: it is not placed
+	//    if it would match on arrival. The SDK first checks that this exchange
+	//    offers post-only orders and sends nothing where it does not.
 	clientOrderID := "demo-" + rand.Text()
 	status := 0
 	orderID := ""
 	refused := false
+	fillMode := ""
+	if os.Getenv("POST_ONLY") != "" {
+		fillMode = stx.PostOnly
+	}
 	order, err := client.Orders.Place(ctx, stx.OrderRequest{
 		MarketID:      market.MarketID,
 		Action:        stx.Buy,
@@ -61,12 +69,14 @@ func run(ctx context.Context) int {
 		Price:         price, // dollars in whole cents, e.g. "0.01"
 		Quantity:      "1",   // one contract
 		ClientOrderID: clientOrderID,
+		FillMode:      fillMode,
 	})
 	var apiErr *stx.APIError
+	var wouldMatch *stx.PostOnlyWouldMatchError
 	switch {
 	case err == nil:
 		orderID = order.ID
-		fmt.Printf("Placed:  buy 1 @ %s  id %s  status %s\n", price, orderID, order.Status)
+		fmt.Printf("Placed:  buy 1 @ %s  id %s  status %s  fill mode %s\n", price, orderID, order.Status, order.FillMode)
 		// 3. Read it back. The order is on the book and has not filled.
 		open, err := demo.ReadOrder(ctx, client, orderID, time.Minute, func(o *stx.Order) bool { return o.Status != "accepted" })
 		if err != nil {
@@ -75,6 +85,22 @@ func run(ctx context.Context) int {
 			break
 		}
 		fmt.Printf("Read:    status %s  filled %s of %s  client id %s\n", open.Status, open.Filled, open.Quantity, open.ClientOrderID)
+	case errors.Is(err, stx.ErrNotAvailable):
+		// This exchange has no post-only orders yet; nothing was sent.
+		refused = true
+		fmt.Fprintf(os.Stderr, "%v Run without POST_ONLY to place a normal order.\n", err)
+	case errors.As(err, &wouldMatch):
+		// Someone offers at this price, so a post-only buy would have
+		// traded. Nothing traded and the book is unchanged.
+		refused = true
+		fmt.Printf("Not placed: the post-only order would have matched (%s)\n", wouldMatch.Reason)
+	case errors.Is(err, stx.ErrBlocked) && errors.As(err, &apiErr):
+		// Refused by the API's firewall before it reached the exchange, for
+		// example from a location the exchange does not serve. Retrying does
+		// not help; quote the reference to support.
+		refused = true
+		fmt.Fprintf(os.Stderr, "Blocked (%s): %s  reference %s\n", apiErr.Code, apiErr.Message, apiErr.Reference)
+		status = 1
 	case errors.As(err, &apiErr):
 		// The exchange explains why it refused the order, e.g. a read_only
 		// key or a market that just paused.
